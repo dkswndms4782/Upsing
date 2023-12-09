@@ -6,7 +6,7 @@ import copy
 import pandas as pd
 from sklearn.model_selection import KFold
 
-from .dataloader import get_loaders,get_all_loader
+from .dataloader import get_loaders,get_all_loader,get_kfold_loaders
 from .optimizer import get_optimizer
 from .scheduler import get_scheduler
 from .criterion import get_criterion
@@ -15,14 +15,15 @@ from .model import AudioClassifier
 from datetime import timedelta, timezone, datetime
 import wandb
 
-def run_all(args, data_df):
-    print(f"# of data : {len(data_df)}")
+def run_all(args, train_df, test_df):
+    print(f"# of train data : {len(train_df)}")
+    print(f"# of test data : {len(test_df)}")
     print()
     if args.use_wandb:
         wandb.login()
         wandb.init(project='upsing', config=vars(args), name = args.wandb_name + "_run_all")
 
-        train_loader = get_all_loader(args, data_df)
+        train_loader = get_all_loader(args,train_df, test_df)
 
         # only when using warmup scheduler
         args.total_steps = int(len(train_loader.dataset) / args.batch_size) * (args.n_epochs)
@@ -76,7 +77,7 @@ def run_all(args, data_df):
                     model_dir, model_name,
                     )
 
-def run(args, data_df):
+def run_kfold(args, data_df):
     print(f"# of data : {len(data_df)}")
     print()
     splits=KFold(n_splits=args.k,shuffle=False)# Setting a random_state has no effect since shuffle is False. You should leave random_state to its default (None), or set shuffle=True. //  ,random_state=args.seed)
@@ -87,7 +88,7 @@ def run(args, data_df):
             wandb.login()
             wandb.init(project='upsing', config=vars(args), name = args.wandb_name + f"_fold{fold}")
 
-        train_loader, val_loader = get_loaders(args, data_df, train_idx, val_idx)
+        train_loader, val_loader = get_kfold_loaders(args, data_df, train_idx, val_idx)
 
         # only when using warmup scheduler
         args.total_steps = int(len(train_loader.dataset) / args.batch_size) * (args.n_epochs)
@@ -166,6 +167,89 @@ def run(args, data_df):
     print(f"Total ACC: {total_acc / 5}")
     print("="*50)
 
+def run(args, train_df, test_df):
+    print(f"# of train data : {len(train_df)}")
+    print(f"# of test data : {len(test_df)}")
+    print()
+    if args.use_wandb:
+        wandb.login()
+        wandb.init(project='upsing', config=vars(args), name = args.wandb_name)
+
+    train_loader, test_loader = get_loaders(args, train_df, test_df)
+
+    # only when using warmup scheduler
+    args.total_steps = int(len(train_loader.dataset) / args.batch_size) * (args.n_epochs)
+    args.warmup_steps = args.total_steps//10
+
+    print(args)
+    model_dir = os.path.join(args.model_dir, args.model_name)
+    os.makedirs(model_dir, exist_ok = True)
+    json.dump(
+        vars(args),
+        open(f"{model_dir}/exp_config.json", "w"),
+        indent=2,
+        ensure_ascii=False
+        )
+
+    print(f"\n{model_dir}/exp_config.json is saved!\n")
+
+    model = get_model(args)
+    if args.use_finetune:
+        load_state = torch.load(args.trained_model)
+        model.load_state_dict(load_state['state_dict'], strict=True)
+        print(f"{args.trained_model} is loaded!")
+
+    optimizer = get_optimizer(model, args)
+    scheduler = get_scheduler(optimizer, args)
+
+    best_auc = -1
+    best_acc = -1
+    early_stopping_couter = 0
+    ### train함수는 한번 학습하는 함수임. 그래서 epoch수만큼 train해야함
+    ### train_loader는 torch.utils.data.DataLoader 사용한건데 for문으로 하나씩 부르면 batch데이터가 나옴
+    for epoch in range(args.n_epochs):
+        
+        print(f"Start Training: Epoch {epoch}")
+        
+        ### TRAIN
+        train_auc, train_acc, train_loss = train(train_loader, model, optimizer, args)
+        ### VALID
+        auc, acc, test_loss = validate(test_loader, model, args)
+
+        ### TODO: model save or early stopping
+        if args.use_wandb:
+            wandb.log({"train_loss": train_loss, "train_auc": train_auc, "train_acc": train_acc,
+                    "test_loss": test_loss, "test_auc": auc, "test_acc": acc})
+
+        if auc > best_auc:
+            best_auc = auc
+            best_acc = acc
+            # torch.nn.DataParallel로 감싸진 경우 원래의 model을 가져옵니다. 
+            model_to_save = model.module if hasattr(model, 'module') else model
+            model_name = 'model_epoch' + str(epoch) + "_auc" + str(round(auc,3)) + "_acc"+ str(round(acc,3)) +  ".pt"
+            save_checkpoint(
+                {'epoch': epoch, 
+                    'state_dict': model_to_save.state_dict(),
+                    "train_loss": train_loss, "train_auc": train_auc, "train_acc": train_acc,
+                    "test_loss": test_loss, "test_auc": auc, "test_acc": acc
+                    },
+                model_dir, model_name,
+                )
+            early_stopping_counter = 0
+        else:
+            early_stopping_counter += 1
+            if early_stopping_counter >= args.patience:
+                    print(f'EarlyStopping counter: {early_stopping_counter} out of {args.patience}')
+                    break
+        # scheduler
+        if args.scheduler == 'plateau':
+            scheduler.step(best_auc)
+        else:
+            scheduler.step()
+    print("="*50)
+    print(f"Best AUC: {best_auc}")
+    print(f"Best ACC: {best_acc}")
+    print("="*50)
 
 
 def train(train_loader, model, optimizer, args):

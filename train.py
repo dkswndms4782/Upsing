@@ -23,14 +23,13 @@ def main(args):
         args.train_file_name = 'teq.csv'
     elif args.type == 'voc':
         args.train_file_name = 'voc.csv'
-    preprocess.load_data(args.train_file_name,args.sub_file_name)
-    data = preprocess.get_data()
-    test_data = None
+    preprocess.load_data(args.train_file_name,args.test_file_name)
+    train_data, test_data = preprocess.get_data()
 
     if args.train_all:
-        trainer.run_all(args,data)
+        trainer.run_all(args,train_data, test_data)
     else:
-        trainer.run(args,data)
+        trainer.run(args,train_data, test_data)
     
 
     

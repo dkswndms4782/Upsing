@@ -12,3 +12,4 @@ def get_scheduler(optimizer, args):
     elif args.scheduler == 'cyclic_lr':
         scheduler = CyclicLR(optimizer, base_lr=args.lr, max_lr=0.1, step_size_up=50, step_size_down=100, mode='triangular')
     return scheduler
+    return scheduler

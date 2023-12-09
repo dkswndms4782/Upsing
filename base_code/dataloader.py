@@ -17,10 +17,11 @@ from torch.utils.data import Dataset, DataLoader,TensorDataset,random_split,Subs
 class Preprocess:
     def __init__(self, args):
         self.args = args
-        self.data = None
+        self.train_data = None
+        self.test_data = None
 
     def get_data(self):
-        return self.data
+        return self.train_data, self.test_data
 
     ## label을 ~_classes.npy로 저장하는것
     def __save_labels(self, encoder, name):
@@ -42,21 +43,23 @@ class Preprocess:
 
 
     ## data불러오는 함수(main_df만드는 함수)
-    def load_data_from_file(self, main_file_name, sub_file_name=None):
-        csv_file_path = os.path.join(self.args.data_dir, main_file_name)
-        main_df = pd.read_csv(csv_file_path)
+    def load_data_from_file(self, train_file_name, test_file_name, sub_file_name=None):
+        train_csv_file_path = os.path.join(self.args.data_dir, train_file_name)
+        test_csv_file_path = os.path.join(self.args.data_dir, test_file_name)
+        train_df = pd.read_csv(train_csv_file_path)
+        test_df = pd.read_csv(test_csv_file_path)
         sub_df = None
         if sub_file_name:
-            csv_file_path = os.path.join(self.args.data_dir, sub_file_name)
-            sub_df = pd.read_csv(csv_file_path)
-        main_df = self.__preprocessing(main_df, sub_df)
-        return main_df
+            sub_csv_file_path = os.path.join(self.args.data_dir, sub_file_name)
+            sub_df = pd.read_csv(sub_csv_file_path)
+        train_df = self.__preprocessing(train_df, sub_df)
+        test_df = self.__preprocessing(test_df)
+        return train_df, test_df
 
 
-    def load_data(self, train_file_name, sub_file_name=None):   
-        self.data = self.load_data_from_file(train_file_name, sub_file_name)
+    def load_data(self, train_file_name,test_file_name, sub_file_name=None):   
+        self.train_data, self.test_data = self.load_data_from_file(train_file_name,test_file_name, sub_file_name)
         print("data is loaded!")
-        print()
 
 class AudioUtil():
     @staticmethod
@@ -92,7 +95,7 @@ class AudioUtil():
         if (sr == newsr):
             return aud
 
-        new_channels = sig.shape[0]
+        num_channels = sig.shape[0]
         resig = torchaudio.transforms.Resample(sr, newsr)(sig[:1,:])
         if (num_channels > 1):
             retwo = torchaudio.transforms.Resample(sr, newsr)(sig[1:,:])
@@ -207,7 +210,6 @@ class UpsingDataset(torch.utils.data.Dataset):
         sig, sr = aud
         sig = sig[:,int(start*self.args.sr):int(end*self.args.sr)]
         aud = (sig, sr)
-        print()
         aud = AudioUtil.standardize(aud)
 
         aud = AudioUtil.pad_trunc(aud, self.args.duration)
@@ -234,8 +236,7 @@ class UpsingDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.data)
 
-
-def get_loaders(args, data, train_idx, val_idx):
+def get_kfold_loaders(args, data, train_idx, val_idx):
     train_loader,val_loader = None, None
 
     if data is not None:
@@ -246,10 +247,23 @@ def get_loaders(args, data, train_idx, val_idx):
         val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler, shuffle=False)
     return train_loader, val_loader
 
-def get_all_loader(args, data):
-    train_loader = None
+def get_loaders(args, train_data, test_data):
+    train_loader,test_loader = None, None
 
-    if data is not None:
-        dataset = UpsingDataset(data, args)
+    if train_data is not None:
+        train_dataset = UpsingDataset(train_data, args)
+        test_dataset =  UpsingDataset(test_data, args)
+        # train_sampler = SubsetRandomSampler(train_idx)
+        # val_sampler = SubsetRandomSampler(val_idx)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size,  shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    return train_loader, test_loader
+
+def get_all_loader(args, train_data, test_data):
+    train_loader,test_loader = None,None
+
+    if train_data is not None and test_data is not None:
+        total_data = np.concatenate([train_data, test_data])
+        dataset = UpsingDataset(total_data, args)
         train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     return train_loader

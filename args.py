@@ -13,9 +13,9 @@ def parse_args(mode='train'):
     parser.add_argument('--asset_dir', default='C:/Users/Ahn/projects/upsing/asset/', type=str, help='data directory')
     parser.add_argument('--data_path', default='C:/Users/Ahn/projects/upsing/copy_song_mr_removed/', type=str, help='copy song data path')
 
-    parser.add_argument('--train_file_name', default='voc.csv', type=str, help='train file name')
+    parser.add_argument('--train_file_name', default='voc_train.csv', type=str, help='train file name')
     parser.add_argument('--sub_file_name', default=None, type=str, help='teq sub file name')
-    parser.add_argument('--test_file_name', default=None, type=str, help='test file name')
+    parser.add_argument('--test_file_name', default='voc_test.csv', type=str, help='test file name')
     
     parser.add_argument('--model_dir', default='C:/Users/Ahn/projects/upsing/model/', type=str, help='model directory')
 
